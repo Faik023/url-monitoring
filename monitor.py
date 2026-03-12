@@ -1,78 +1,87 @@
-import json
+import os
 import time
+import json
 import requests
-import logging
-def send_telegram_alert(bot_token, chat_id, message):
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+from dotenv import load_dotenv
 
-    payload = {
-        "chat_id": chat_id,
-        "text": message
-    }
+# загружаем .env
+load_dotenv()
 
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+if not BOT_TOKEN:
+    print("ERROR: BOT_TOKEN not found in .env")
+    exit()
+
+CONFIG_FILE = "config.json"
+LOG_FILE = "monitor.log"
+
+
+def log(message):
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{timestamp}] {message}"
+
+    print(line)
+
+    with open(LOG_FILE, "a") as f:
+        f.write(line + "\n")
+
+
+def send_message(chat_id, text):
     try:
-        requests.post(url, json=payload)
-    except Exception as e:
-        logging.error(f"Telegram alert failed: {e}")
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-# Настройка логирования
-logging.basicConfig(
-    filename="monitor.log",
-    level=logging.INFO,
-    format="%(asctime)s - %(message)s"
-)
+        data = {
+            "chat_id": chat_id,
+            "text": text
+        }
+
+        requests.post(url, data=data, timeout=10)
+
+    except Exception as e:
+        log(f"Telegram error: {e}")
 
 
 def load_config():
-    with open("config.json", "r") as file:
-        return json.load(file)
+    try:
+        with open(CONFIG_FILE, "r") as file:
+            return json.load(file)
+    except Exception as e:
+        log(f"Config error: {e}")
+        exit()
 
 
-def check_urls(urls):
-    errors = []
-
-    for url in urls:
-        try:
-            response = requests.get(url, timeout=10)
-
-            if response.status_code == 200:
-                logging.info(f"{url} OK")
-                print(f"{url} OK")
-            else:
-                logging.error(f"{url} ERROR {response.status_code}")
-                errors.append(f"{url} returned {response.status_code}")
-
-        except requests.RequestException as e:
-            logging.error(f"{url} FAILED {e}")
-            errors.append(f"{url} FAILED")
-
-    return errors
+def check_url(url):
+    try:
+        response = requests.get(url, timeout=10)
+        return response.status_code == 200
+    except:
+        return False
 
 
 def main():
+
     config = load_config()
 
     urls = config["urls"]
     interval = config["check_interval"]
-    bot_token = config["telegram_bot_token"]
-    chat_id = config["telegram_chat_id"]
+    chat_id = config["chat_id"]
+
+    log("URL Monitor started")
 
     while True:
-        print("Checking URLs...")
 
-        errors = check_urls(urls)
+        for url in urls:
 
-        if errors:
-            message = "⚠ Website monitoring alert!\n\n"
+            status = check_url(url)
 
-            for error in errors:
-                message += f"{error}\n"
+            if status:
+                log(f"{url} OK")
+            else:
+                log(f"{url} DOWN")
 
-            print(message)
-
-            send_telegram_alert(bot_token, chat_id, message)
-        else:
-            print("All sites are OK")
+                message = f"⚠️ Website DOWN: {url}"
+                send_message(chat_id, message)
 
         time.sleep(interval)
 
